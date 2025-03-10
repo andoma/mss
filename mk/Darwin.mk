@@ -1,0 +1,3 @@
+
+LDFLAGS+=-framework Foundation
+
