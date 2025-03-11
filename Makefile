@@ -8,7 +8,7 @@ CPPFLAGS += -O2 -ggdb -Wall -Werror
 
 CXXFLAGS += -DIMGUI_USER_CONFIG=\"imcfg.h\"
 CXXFLAGS += -I. -Iext/imgui -Iext/imgui/backends/  -Iext/implot -std=c++14
-LDFLAGS += -lm -lpthread
+LDFLAGS += -lfmt -lm
 
 CPPFLAGS += ${shell pkg-config --cflags libusb-1.0}
 LDFLAGS += ${shell pkg-config --libs libusb-1.0}
