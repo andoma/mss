@@ -69,6 +69,7 @@ struct Scope {
 
     std::vector<std::string> m_axis;
 
+    size_t m_depth{0};
     size_t m_num_channels{0};
     Channel m_channels[MAX_CHANNELS];
 
@@ -141,6 +142,7 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
         m_active_channels = p->channels;
         m_trig_offset = p->trig_offset;
         m_columns_per_xfer = 32 / p->channels;
+        m_depth = p->depth;
 
         for(size_t i = 0; i < MAX_CHANNELS; i++) {
             m_channels[i].m_values.clear();
@@ -189,7 +191,8 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
             for(size_t j = 0; j < m_active_channels; j++) {
                 auto &c = m_channels[j];
                 float v = *src++ * c.m_scale;
-                c.m_values.push_back(v);
+                if(c.m_values.size() < m_depth)
+                    c.m_values.push_back(v);
             }
         }
     }
