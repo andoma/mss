@@ -175,12 +175,10 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
         if(i == m_axis.size()) {
             m_axis.push_back(unit);
         }
-        printf("Channel %d Unit %s -> Axis: %zd\n",
-               chidx, unit, i);
+
         m_channels[chidx].m_axis = i;
 
     } else if(actual_length == 1) {
-        printf("Got trailer\n");
         if(!m_autofit)
             m_autofit = 1;
 
