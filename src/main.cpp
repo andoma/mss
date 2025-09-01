@@ -62,10 +62,10 @@ struct Channel {
 
 #define MAX_CHANNELS 32
 
-struct Scope {
-    void handle_pkt(const uint8_t *pkt, size_t actual_length);
 
-    std::mutex m_mutex;
+struct Buffer {
+
+    bool handle_pkt(const uint8_t *pkt, size_t actual_length);
 
     std::vector<std::string> m_axis;
 
@@ -78,9 +78,19 @@ struct Scope {
 
     size_t m_columns_per_xfer{0};
 
-    int m_autofit{0};
-
     int m_trig_offset{0};
+
+};
+
+
+struct Scope {
+    void handle_pkt(const uint8_t *pkt, size_t actual_length);
+
+    std::mutex m_mutex;
+    Buffer m_rd;
+    Buffer m_active;
+
+    int m_autofit{0};
 };
 
 
@@ -130,11 +140,9 @@ unit_to_str(sigcapture_unit_t unit)
 }
 
 
-void
-Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
+bool
+Buffer::handle_pkt(const uint8_t *pkt, size_t actual_length)
 {
-    std::unique_lock<std::mutex> lk(m_mutex);
-
     if(actual_length == sizeof(sc_usb_pkt_preamble_t)) {
         const sc_usb_pkt_preamble_t *p = (const sc_usb_pkt_preamble_t *)pkt;
 
@@ -156,7 +164,7 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
 
         int chidx = c->pkt_type;
         if(chidx >= MAX_CHANNELS)
-            return;
+            return false;
 
         auto unit = unit_to_str((sigcapture_unit_t)c->unit);
 
@@ -179,8 +187,8 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
         m_channels[chidx].m_axis = i;
 
     } else if(actual_length == 1) {
-        if(!m_autofit)
-            m_autofit = 1;
+        // End of data
+        return true;
 
     } else if(actual_length == 64) {
 
@@ -194,8 +202,23 @@ Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
             }
         }
     }
+    return false;
 }
 
+
+void
+Scope::handle_pkt(const uint8_t *pkt, size_t actual_length)
+{
+    if(m_rd.handle_pkt(pkt, actual_length)) {
+        // Done
+        std::unique_lock<std::mutex> lk(m_mutex);
+
+        m_active = std::move(m_rd);
+
+        if(!m_autofit)
+            m_autofit = 1;
+    }
+}
 
 static void
 rx_thread(Scope &scope)
@@ -314,9 +337,9 @@ rx_thread(Scope &scope)
 static int
 timefmt(double value, char* buff, int size, void* user_data)
 {
-    Scope *s = (Scope *)user_data;
-    value -= s->m_trig_offset;
-    value /= s->m_nominal_frequency;
+    Buffer *b = (Buffer *)user_data;
+    value -= b->m_trig_offset;
+    value /= b->m_nominal_frequency;
     return snprintf(buff, size, "%.2f", value * 1000.0);
 }
 
@@ -428,15 +451,17 @@ main(int argc, char **argv)
             if(ImPlot::BeginPlot("scope", ImVec2(-1, 350))) {
                 std::unique_lock<std::mutex> lk(scope.m_mutex);
 
-                ImPlot::SetupAxis(ImAxis_X1, "ms");
-                ImPlot::SetupAxisFormat(ImAxis_X1, timefmt, &scope);
+                Buffer &b = scope.m_active;
 
-                for(size_t i = 0; i < scope.m_axis.size(); i++) {
-                    ImPlot::SetupAxis(ImAxis_Y1 + i, scope.m_axis[i].c_str());
+                ImPlot::SetupAxis(ImAxis_X1, "ms");
+                ImPlot::SetupAxisFormat(ImAxis_X1, timefmt, &b);
+
+                for(size_t i = 0; i < b.m_axis.size(); i++) {
+                    ImPlot::SetupAxis(ImAxis_Y1 + i, b.m_axis[i].c_str());
                 }
 
-                for(size_t i = 0; i < scope.m_active_channels; i++) {
-                    const auto &c = scope.m_channels[i];
+                for(size_t i = 0; i < b.m_active_channels; i++) {
+                    const auto &c = b.m_channels[i];
                     if(c.m_values.size() == 0)
                         continue;
                     ImPlot::SetAxis(ImAxis_Y1 + c.m_axis);
