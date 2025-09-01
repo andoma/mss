@@ -55,6 +55,7 @@ static uint16_t remote_subclass;
 struct Channel {
     std::string m_name;
     std::string m_unit;
+    bool m_digital{false};
     float m_scale{0};
     size_t m_axis{0};
     std::vector<float> m_values;
@@ -80,6 +81,7 @@ struct Buffer {
 
     int m_trig_offset{0};
 
+    std::vector<float> m_time;
 };
 
 
@@ -117,6 +119,7 @@ typedef enum {
     SIGCAPTURE_UNIT_VOLTAGE,
     SIGCAPTURE_UNIT_CURRENT,
     SIGCAPTURE_UNIT_TEMPERATURE,
+    SIGCAPTURE_UNIT_DIGITAL,
 } sigcapture_unit_t;
 
 
@@ -157,6 +160,12 @@ Buffer::handle_pkt(const uint8_t *pkt, size_t actual_length)
             m_channels[i].m_values.reserve(p->depth);
         }
 
+        m_time.reserve(m_depth);
+        for(size_t i = 0; i < m_depth; i++) {
+            float t = ((float)i - (float)m_trig_offset) / (float)m_nominal_frequency;
+            m_time.push_back(t);
+        }
+
         m_axis.clear();
 
     } else if(actual_length == sizeof(sc_usb_pkt_channel_t)) {
@@ -166,22 +175,33 @@ Buffer::handle_pkt(const uint8_t *pkt, size_t actual_length)
         if(chidx >= MAX_CHANNELS)
             return false;
 
-        auto unit = unit_to_str((sigcapture_unit_t)c->unit);
+        sigcapture_unit_t unit = (sigcapture_unit_t)c->unit;
+        std::string unitstr;
 
-        m_channels[chidx].m_name = fmt::format("{} ({})", c->name, unit);
-        m_channels[chidx].m_scale = c->scale;
+        if(unit == SIGCAPTURE_UNIT_DIGITAL) {
 
-        m_channels[chidx].m_unit = unit;
+            m_channels[chidx].m_name = c->name;
+            m_channels[chidx].m_scale = 1.0f;
+            m_channels[chidx].m_digital = true;
+            unitstr = "1";
+
+        } else {
+            unitstr = unit_to_str(unit);
+
+            m_channels[chidx].m_name = fmt::format("{} ({})", c->name, unitstr);
+            m_channels[chidx].m_scale = c->scale;
+            m_channels[chidx].m_unit = unit;
+        }
 
         size_t i;
         for(i = 0; i < m_axis.size(); i++) {
-            if(m_axis[i] == m_channels[chidx].m_unit) {
+            if(m_axis[i] == unitstr) {
                 break;
             }
         }
 
         if(i == m_axis.size()) {
-            m_axis.push_back(unit);
+            m_axis.push_back(unitstr);
         }
 
         m_channels[chidx].m_axis = i;
@@ -337,9 +357,6 @@ rx_thread(Scope &scope)
 static int
 timefmt(double value, char* buff, int size, void* user_data)
 {
-    Buffer *b = (Buffer *)user_data;
-    value -= b->m_trig_offset;
-    value /= b->m_nominal_frequency;
     return snprintf(buff, size, "%.2f", value * 1000.0);
 }
 
@@ -448,7 +465,7 @@ main(int argc, char **argv)
                 ImPlot::SetNextAxesToFit();
             }
 
-            if(ImPlot::BeginPlot("scope", ImVec2(-1, 350))) {
+            if(ImPlot::BeginPlot("scope", ImVec2(-1, -1))) {
                 std::unique_lock<std::mutex> lk(scope.m_mutex);
 
                 Buffer &b = scope.m_active;
@@ -469,8 +486,15 @@ main(int argc, char **argv)
                     ImPlot::PushStyleColor(ImPlotCol_Line,
                                            channel_colors[i & 7]);
 
-                    ImPlot::PlotLine(c.m_name.c_str(),
-                                     c.m_values.data(), c.m_values.size());
+                    if(c.m_digital) {
+                        ImPlot::PlotDigital(c.m_name.c_str(),
+                                            b.m_time.data(),
+                                            c.m_values.data(), c.m_values.size());
+                    } else {
+                        ImPlot::PlotLine(c.m_name.c_str(),
+                                         b.m_time.data(),
+                                         c.m_values.data(), c.m_values.size());
+                    }
                     ImPlot::PopStyleColor();
                 }
                 ImPlot::EndPlot();
